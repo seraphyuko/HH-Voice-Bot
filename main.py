@@ -50,12 +50,26 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
         await query.message.reply_text(f"You selected option: {query.data}")
 
 async def text_to_speech_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = str(update.effective_user.id)
     text = update.message.text
-    await update.message.reply_text("အသံဖိုင် ဖန်တီးနေပါသည်...")
+
+    # Check and deduct 1 credit
+    success, error_msg, remaining = database.deduct_credit(user_id, cost=1)
+    if not success:
+        await update.message.reply_text(error_msg, parse_mode="Markdown")
+        return
+
+    status_msg = await update.message.reply_text("အသံဖိုင် ဖန်တီးနေပါသည်...")
 
     try:
         audio_stream = tts_engine.generate_myanmar_speech(text)
-        await update.message.reply_voice(voice=audio_stream)
+        
+        # Send voice note with remaining credit info
+        await update.message.reply_voice(
+            voice=audio_stream,
+            caption=f"✅ အသံဖိုင် ဖန်တီးပြီးပါပြီ။\n💳 သင့်လက်ကျန် Credit: **{remaining}**",
+            parse_mode="Markdown"
+        )
     except Exception as e:
         await update.message.reply_text(f"Error generating audio: {e}")
 

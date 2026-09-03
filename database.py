@@ -11,6 +11,29 @@ def load_data():
     with open(DATA_FILE, "r") as f:
         return json.load(f)
 
+def deduct_credit(user_id: str, cost: int = 1) -> tuple[bool, str, int]:
+    """
+    Deducts credits for service usage.
+    Returns: (success_boolean, message, remaining_credits)
+    """
+    data = load_data()
+    
+    if user_id not in data or data[user_id].get("credits", 0) < cost:
+        current = data.get(user_id, {}).get("credits", 0)
+        msg = (
+            "❌ **Credit မလုံလောက်ပါ!**\n\n"
+            f"ဤဝန်ဆောင်မှုကို အသုံးပြုရန် **{cost} Credit** လိုအပ်ပါသည်။\n"
+            f"သင့်လက်ကျန် Credit: **{current}**\n\n"
+            "🎁 'နေ့စဉ်ဝင်မည်' မှ Credit အခမဲ့ ရယူပါ သို့မဟုတ် Credit ဖြည့်ပါ parameter။"
+        )
+        return False, msg, current
+
+    data[user_id]["credits"] -= cost
+    save_data(data)
+    
+    remaining = data[user_id]["credits"]
+    return True, "Credit deducted", remaining
+
 def save_data(data):
     """Saves user data to JSON file."""
     with open(DATA_FILE, "w") as f:
