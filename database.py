@@ -1,88 +1,76 @@
-import json
 import os
-from datetime import datetime, timedelta
+from datetime import date
+from pymongo import MongoClient
+from dotenv import load_dotenv
 
-DATA_FILE = "users.json"
+load_dotenv("token.env")
 
-def load_data():
-    """Loads user data from JSON file."""
-    if not os.path.exists(DATA_FILE):
-        return {}
-    with open(DATA_FILE, "r") as f:
-        return json.load(f)
+MONGO_URI = os.getenv("MONGO_URI")
+client = MongoClient(MONGO_URI)
+db = client["hh_voice_bot"]
 
-def deduct_credit(user_id: str, cost: int = 1) -> tuple[bool, str, int]:
-    """
-    Deducts credits for service usage.
-    Returns: (success_boolean, message, remaining_credits)
-    """
-    data = load_data()
-    
-    if user_id not in data or data[user_id].get("credits", 0) < cost:
-        current = data.get(user_id, {}).get("credits", 0)
-        msg = (
-            "❌ **Credit မလုံလောက်ပါ!**\n\n"
-            f"ဤဝန်ဆောင်မှုကို အသုံးပြုရန် **{cost} Credit** လိုအပ်ပါသည်။\n"
-            f"သင့်လက်ကျန် Credit: **{current}**\n\n"
-            "🎁 'နေ့စဉ်ဝင်မည်' မှ Credit အခမဲ့ ရယူပါ သို့မဟုတ် Credit ဖြည့်ပါ parameter။"
-        )
-        return False, msg, current
+users_col = db["users"]
+txs_col = db["processed_transactions"]
 
-    data[user_id]["credits"] -= cost
-    save_data(data)
-    
-    remaining = data[user_id]["credits"]
-    return True, "Credit deducted", remaining
+def get_user(user_id: str | int) -> dict:
+    """Fetch user data, create default record if user does not exist."""
+    uid = str(user_id)
+    user = users_col.find_one({"_id": uid})
+    if not user:
+        user = {"_id": uid, "credits": 5, "last_claimed": None}
+        users_col.insert_one(user)
+    return user
 
-def save_data(data):
-    """Saves user data to JSON file."""
-    with open(DATA_FILE, "w") as f:
-        json.dump(data, f, indent=4)
+def load_data() -> dict:
+    """Compatibility helper for main.py state management."""
+    users = {str(doc["_id"]): doc for doc in users_col.find()}
+    processed = [str(doc["_id"]) for doc in txs_col.find()]
+    users["processed_transactions"] = processed
+    return users
 
-def claim_daily_credit(user_id: str) -> tuple[bool, str, int]:
-    """
-    Checks if user can claim daily credit.
-    Returns: (success_boolean, message, updated_balance)
-    """
-    data = load_data()
-    now = datetime.now()
-
-    # Initialize user if new
-    if user_id not in data:
-        data[user_id] = {
-            "credits": 5,
-            "last_claimed": None
-        }
-
-    user_info = data[user_id]
-    last_claimed_str = user_info.get("last_claimed")
-
-    # Check 24-hour limit
-    if last_claimed_str:
-        last_claimed = datetime.fromisoformat(last_claimed_str)
-        time_passed = now - last_claimed
-        
-        if time_passed < timedelta(hours=24):
-            remaining_time = timedelta(hours=24) - time_passed
-            hours, remainder = divmod(remaining_time.seconds, 3600)
-            minutes, _ = divmod(remainder, 60)
-            
-            msg = (
-                "⚠️ **ယနေ့အတွက် Bonus ရယူပြီးပါပြီ!**\n\n"
-                f"နောက်ထပ် ရယူနိုင်ရန် **{hours} နာရီ {minutes} မိနစ်** စောင့်ဆိုင်းပါ။\n"
-                f"💳 လက်ရှိ လက်ကျန် Credit: **{user_info['credits']}**"
+def save_data(data: dict):
+    """Saves/Updates user state and processed transactions."""
+    for key, val in data.items():
+        if key == "processed_transactions":
+            for tx_id in val:
+                txs_col.update_one({"_id": str(tx_id)}, {"$set": {"_id": str(tx_id)}}, upsert=True)
+        elif isinstance(val, dict):
+            users_col.update_one(
+                {"_id": str(key)},
+                {"$set": {"credits": val.get("credits", 5), "last_claimed": val.get("last_claimed")}},
+                upsert=True
             )
-            return False, msg, user_info["credits"]
 
-    # Award +2 credits and record timestamp
-    user_info["credits"] += 2
-    user_info["last_claimed"] = now.isoformat()
-    data[user_id] = user_info
-    save_data(data)
-
-    msg = (
-        "🎉 **နေ့စဉ်ဝင်ရောက်မှု Bonus အောင်မြင်ပါသည်!**\n\n"
-        f"🎁 သင် +2 Credit ရရှိပါသည်။\n"
-        f"💳 လက်ရှိ လက်ကျန် Credit: **{user_info['credits']}**"
+def deduct_credit(user_id: str | int, cost: int = 1) -> tuple[bool, str, int]:
+    """Atomically deducts credits from user balance."""
+    uid = str(user_id)
+    
+    # Try atomic deduction directly in MongoDB to avoid race conditions
+    result = users_col.find_one_and_update(
+        {"_id": uid, "credits": {"$gte": cost}},
+        {"$inc": {"credits": -cost}},
+        return_document=True
     )
-    return True, msg, user_info["credits"]
+
+    if result is None:
+        user = get_user(uid)
+        current = user.get("credits", 0)
+        return False, f"❌ Credit မလုံလောက်ပါ။ (လိုအပ်ချက်: {cost} Credits)", current
+
+    return True, "", result["credits"]
+
+def claim_daily_credit(user_id: str | int) -> tuple[bool, str, int]:
+    """Claims daily bonus credits once per calendar day."""
+    uid = str(user_id)
+    user = get_user(uid)
+    today_str = date.today().isoformat()
+
+    if user.get("last_claimed") == today_str:
+        return False, "⚠️ သင် ယနေ့အတွက် Daily Credit ရယူပြီးဖြစ်ပါသည်။", user.get("credits", 0)
+
+    new_balance = user.get("credits", 0) + 1
+    users_col.update_one(
+        {"_id": uid},
+        {"$set": {"credits": new_balance, "last_claimed": today_str}}
+    )
+    return True, f"🎉 **Daily Credit +1** ရရှိပါသည်။\n💳 လက်ရှိ လက်ကျန် Credit: **{new_balance}**", new_balance

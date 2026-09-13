@@ -1,13 +1,7 @@
-C:\work\Python_Flask\
-│
-├── token.env              # Environment variables (Bot Token)
-├── requirements.txt       # Dependencies
-├── config.py              # Configuration & env loader
-├── keyboards.py           # Telegram Inline Keyboards layout
-├── tts_engine.py          # Text-to-Speech logic (gTTS)
-└── main.py                # Bot setup, command handlers & main execution loop
-
-
 python-telegram-bot
+pymongo[srv]
+dnspython
 python-dotenv
+google-generativeai
 gTTS
+requests

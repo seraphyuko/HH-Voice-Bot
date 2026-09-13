@@ -1,5 +1,30 @@
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+def get_tts_engine_keyboard():
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                "🎙️ Classic TTS (Standard - 1 Credit)", 
+                callback_data="btn_tts_classic"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "TTS(Voice Clone) (Beta - Premium 3 Credits)", 
+                callback_data="btn_tts_clone"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "◀️ ပင်မစာမျက်နှာသို့", 
+                callback_data="btn_main_menu"
+            )
+        ]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+    
 def get_main_menu_keyboard() -> InlineKeyboardMarkup:
     """Returns the main menu inline keyboard structure."""
     keyboard = [
